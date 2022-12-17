@@ -178,7 +178,7 @@ lazy_static! {
         );
         decl.add_method(sel!(keyDown:), key_down as extern "C" fn(&Object, Sel, id));
         decl.add_method(sel!(keyUp:), key_up as extern "C" fn(&Object, Sel, id));
-        decl.add_method(sel!(performKeyEquivalent:), perform_key_equivalent as extern "C" fn(&Object, Sel, id));
+        decl.add_method(sel!(performKeyEquivalent:), perform_key_equivalent as extern "C" fn(&Object, Sel, id) -> BOOL);
         decl.add_method(
             sel!(flagsChanged:),
             flags_changed as extern "C" fn(&Object, Sel, id),
@@ -730,10 +730,19 @@ extern "C" fn key_up(this: &Object, _sel: Sel, event: id) {
 }
 
 
-extern "C" fn perform_key_equivalent(this: &Object, _sel: Sel, event: id) {
-    // println!("BAWSDUBIAsIDbu");
+// extern function which is called when the user presses a key
+extern "C" fn perform_key_equivalent(this: &Object, _sel: Sel, event: id) -> BOOL {
+
     // trace!("Triggered `keyDown`");
     unsafe {
+        let scancode = get_scancode(event) as u32;
+
+        // if scancode is 44, exit
+        if scancode != 44 {
+            return false;
+        }
+
+
         let state_ptr: *mut c_void = *this.get_ivar("winitState");
         let state = &mut *(state_ptr as *mut ViewState);
         let window_id = WindowId(get_window_id(state.ns_window));
@@ -741,11 +750,8 @@ extern "C" fn perform_key_equivalent(this: &Object, _sel: Sel, event: id) {
 
         state.raw_characters = Some(characters.clone());
 
-        let scancode = get_scancode(event) as u32;
         let virtual_keycode = retrieve_keycode(event);
-
         let is_repeat: bool = msg_send![event, isARepeat];
-
         update_potentially_stale_modifiers(state, event);
 
         #[allow(deprecated)]
@@ -763,32 +769,20 @@ extern "C" fn perform_key_equivalent(this: &Object, _sel: Sel, event: id) {
             },
         };
 
-
-        let pass_along = {
-            AppState::queue_event(EventWrapper::StaticEvent(window_event));
-            // Emit `ReceivedCharacter` for key repeats
-            if is_repeat && state.is_key_down {
-                for character in characters.chars().filter(|c| !is_corporate_character(*c)) {
-                    AppState::queue_event(EventWrapper::StaticEvent(Event::WindowEvent {
-                        window_id,
-                        event: WindowEvent::ReceivedCharacter(character),
-                    }));
-                }
-                false
-            } else {
-                scancode != 44
-            }
-        };
-
-        if pass_along {
-            // Some keys (and only *some*, with no known reason) don't trigger `insertText`, while others do...
-            // So, we don't give repeats the opportunity to trigger that, since otherwise our hack will cause some
-            // keys to generate twice as many characters.
-            let array: id = msg_send![class!(NSArray), arrayWithObject: event];
-            let _: () = msg_send![this, interpretKeyEvents: array];
+        AppState::queue_event(EventWrapper::StaticEvent(window_event));
+        for character in characters.chars().filter(|c| !is_corporate_character(*c)) {
+            AppState::queue_event(EventWrapper::StaticEvent(Event::WindowEvent {
+                window_id,
+                event: WindowEvent::ReceivedCharacter(character),
+            }));
         }
+
+        // let array: id = msg_send![class!(NSArray), arrayWithObject: event];
+        // let _: () = msg_send![this, interpretKeyEvents: array];
+
     }
     // trace!("Completed `keyDown`");
+    return true;
 }
 
 
